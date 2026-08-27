@@ -1,38 +1,63 @@
 /* Laundry Card
+ * Displays power/energy history for a single laundry or dryer machine.
  * No helper entities required.
- * Reads power/energy history directly from Home Assistant.
  */
 class LaundryCard extends HTMLElement {
   static getStubConfig() {
     return {
       type: "custom:laundry-card",
+      machine_type: "laundry",
+      name: "Lave-linge",
       price_per_kwh: 0.25,
-      detection: { start_power: 10, stop_power: 5, stop_delay: 180, min_cycle_duration: 60 },
-      laundry: { name: "Lave-linge", power: "", energy: "", current: "" },
-      dryer: { name: "Sèche-linge", power: "", energy: "", current: "" }
+      detection: { 
+        start_power: 10, 
+        stop_power: 5, 
+        stop_delay: 180, 
+        min_cycle_duration: 60 
+      },
+      power: "",
+      energy: "",
+      current: ""
     };
   }
 
+  constructor() {
+    super();
+    this._data = null;
+    this._refreshTimer = null;
+  }
+
   setConfig(config) {
+    const machineType = config.machine_type || "laundry";
+    const defaultName = machineType === "dryer" ? "Sèche-linge" : "Lave-linge";
+    const defaultIcon = machineType === "dryer" ? "🔥" : "🧺";
+
     this._config = {
+      machine_type: machineType,
+      name: defaultName,
       price_per_kwh: 0.25,
-      detection: { start_power: 10, stop_power: 5, stop_delay: 180, min_cycle_duration: 60 },
-      laundry: { name: "Lave-linge", power: "", energy: "", current: "" },
-      dryer: { name: "Sèche-linge", power: "", energy: "", current: "" },
+      detection: { 
+        start_power: 10, 
+        stop_power: 5, 
+        stop_delay: 180, 
+        min_cycle_duration: 60 
+      },
+      power: "",
+      energy: "",
+      current: "",
+      refresh_interval: 60000,
       ...config,
     };
+
     this._config.detection = {
-      start_power: 10, stop_power: 5, stop_delay: 180, min_cycle_duration: 60,
+      start_power: 10, 
+      stop_power: 5, 
+      stop_delay: 180, 
+      min_cycle_duration: 60,
       ...(config.detection || {})
     };
-    this._config.laundry = {
-      name: "Lave-linge", power: "", energy: "", current: "",
-      ...(config.laundry || {})
-    };
-    this._config.dryer = {
-      name: "Sèche-linge", power: "", energy: "", current: "",
-      ...(config.dryer || {})
-    };
+
+    this._icon = defaultIcon;
     this._render();
   }
 
@@ -60,11 +85,11 @@ class LaundryCard extends HTMLElement {
   }
 
   async _load() {
-    if (!this._hass) return;
-    const jobs = [];
-    if (this._config.laundry.power) jobs.push(["laundry", this._config.laundry]);
-    if (this._config.dryer.power) jobs.push(["dryer", this._config.dryer]);
-    for (const [key, machine] of jobs) this._data[key] = await this._analyse(machine);
+    if (!this._hass || !this._config.power) {
+      this._data = null;
+      return;
+    }
+    this._data = await this._analyse();
     this._render();
   }
 
@@ -86,7 +111,7 @@ class LaundryCard extends HTMLElement {
     }
   }
 
-  async _analyse(machine) {
+  async _analyse() {
     const now = new Date();
     const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
     const historyStart = new Date(Math.min(
@@ -95,8 +120,8 @@ class LaundryCard extends HTMLElement {
     ));
 
     const [power, energy] = await Promise.all([
-      this._history(machine.power, historyStart, now),
-      this._history(machine.energy, historyStart, now)
+      this._history(this._config.power, historyStart, now),
+      this._history(this._config.energy, historyStart, now)
     ]);
 
     const cycles = this._detect(power);
@@ -105,7 +130,7 @@ class LaundryCard extends HTMLElement {
     const weekCycles = cycles.filter(c => c.start >= weekStart);
     const monthCycles = cycles.filter(c => c.start >= monthStart);
 
-    const unit = this._energyUnit(machine.energy);
+    const unit = this._energyUnit();
     const weekEnergy = weekCycles.reduce((s, c) => s + this._cycleEnergy(c, energy, unit), 0);
     const monthEnergy = monthCycles.reduce((s, c) => s + this._cycleEnergy(c, energy, unit), 0);
 
@@ -139,7 +164,7 @@ class LaundryCard extends HTMLElement {
       time: new Date(x.last_changed),
       power: Number(x.state)
     })).filter(x => Number.isFinite(x.power))
-      .sort((a,b) => a.time - b.time);
+      .sort((a, b) => a.time - b.time);
 
     const cycles = [];
     let running = false, start = null, belowSince = null;
@@ -159,7 +184,9 @@ class LaundryCard extends HTMLElement {
         if (p.time - belowSince >= stopDelay) {
           const end = belowSince;
           if (end - start >= minDuration) cycles.push({ start, end });
-          running = false; start = null; belowSince = null;
+          running = false;
+          start = null;
+          belowSince = null;
         }
       } else {
         belowSince = null;
@@ -170,8 +197,8 @@ class LaundryCard extends HTMLElement {
     return cycles;
   }
 
-  _energyUnit(entityId) {
-    const s = this._hass?.states?.[entityId];
+  _energyUnit() {
+    const s = this._hass?.states?.[this._config.energy];
     return s?.attributes?.unit_of_measurement === "Wh" ? "Wh" : "kWh";
   }
 
@@ -179,7 +206,8 @@ class LaundryCard extends HTMLElement {
     let best = null;
     for (const x of history) {
       const t = new Date(x.last_changed);
-      if (t <= date) best = x; else break;
+      if (t <= date) best = x;
+      else break;
     }
     const n = best ? Number(best.state) : NaN;
     return Number.isFinite(n) ? n : null;
@@ -198,7 +226,7 @@ class LaundryCard extends HTMLElement {
     const x = new Date(d);
     const day = x.getDay();
     x.setDate(x.getDate() + (day === 0 ? -6 : 1 - day));
-    x.setHours(0,0,0,0);
+    x.setHours(0, 0, 0, 0);
     return x;
   }
 
@@ -218,73 +246,288 @@ class LaundryCard extends HTMLElement {
     return `il y a ${d} jour${d > 1 ? "s" : ""}`;
   }
 
-  _fmtKwh(v) { return `${v.toFixed(2).replace(".", ",")} kWh`; }
-  _fmtEuro(v) { return `${v.toFixed(2).replace(".", ",")} €`; }
+  _fmtKwh(v) {
+    return `${v.toFixed(2).replace(".", ",")} kWh`;
+  }
 
-  _machine(machine, data, icon) {
-    if (!machine.power) return "";
-    if (!data) return `<section class="machine"><header><div class="title">${icon} ${machine.name}</div></header><div class="loading">Chargement…</div></section>`;
-
-    const running = data.running;
-    const status = running ? "EN COURS" : "À L'ARRÊT";
-    const primary = running
-      ? `Depuis ${this._duration(data.currentCycle.start)}`
-      : (data.lastFinished ? `Dernier cycle : ${this._ago(data.lastFinished.end)}` : "Aucun cycle enregistré");
-
-    return `
-      <section class="machine ${running ? "running" : ""}">
-        <header>
-          <div class="title"><span class="icon">${icon}</span>${machine.name}</div>
-          <div class="status ${running ? "on" : "off"}">● ${status}</div>
-        </header>
-        <div class="state"><div class="state-icon">${running ? "▶" : "■"}</div><div><b>${running ? "Machine en cours" : "Machine à l'arrêt"}</b><span>${primary}</span></div></div>
-        <div class="consumption">
-          <span class="label">CONSOMMATION</span>
-          <div class="energy">⚡ <b>${this._fmtKwh(running ? data.currentEnergy : 0)}</b></div>
-          <small>${running ? "Cycle en cours" : "Aucune consommation en cours"}</small>
-        </div>
-        <div class="stats">
-          <div><span>Cette semaine</span><b>${data.cyclesWeek} cycle${data.cyclesWeek > 1 ? "s" : ""}</b><small>${this._fmtEuro(data.costWeek)}</small></div>
-          <i></i>
-          <div><span>Ce mois</span><b>${data.cyclesMonth} cycle${data.cyclesMonth > 1 ? "s" : ""}</b><small>${this._fmtEuro(data.costMonth)}</small></div>
-        </div>
-      </section>`;
+  _fmtEuro(v) {
+    return `${v.toFixed(2).replace(".", ",")} €`;
   }
 
   _renderCurrent() {
-    // Update dynamic text without forcing a history request.
-    if (!this._hass) return;
-    const nodes = this.shadowRoot?.querySelectorAll("[data-running-duration]");
-    nodes?.forEach(n => {
-      const key = n.dataset.runningDuration;
-      const d = this._data?.[key];
-      if (d?.running) n.textContent = `Depuis ${this._duration(d.currentCycle.start)}`;
-    });
+    if (!this._hass || !this._data?.running) return;
+    const elem = this.shadowRoot?.querySelector("[data-running-duration]");
+    if (elem) {
+      elem.textContent = `Depuis ${this._duration(this._data.currentCycle.start)}`;
+    }
   }
 
   _render() {
-    if (!this.shadowRoot) this.attachShadow({mode:"open"});
-    const c = this._config || {};
+    if (!this.shadowRoot) this.attachShadow({ mode: "open" });
+
+    const c = this._config;
+    if (!c.power) {
+      this.shadowRoot.innerHTML = `
+        <style>
+          :host { display: block; }
+          .error { 
+            background: var(--ha-card-background, var(--card-background-color, #fff));
+            border-radius: 16px;
+            padding: 16px;
+            color: var(--error-color, #f44336);
+            text-align: center;
+          }
+        </style>
+        <ha-card class="card">
+          <div class="error">⚠️ Entité "power" non configurée</div>
+        </ha-card>`;
+      return;
+    }
+
+    const data = this._data;
+    const running = data?.running || false;
+    const status = running ? "EN COURS" : "À L'ARRÊT";
+    const primary = running
+      ? `Depuis ${this._duration(data.currentCycle.start)}`
+      : (data?.lastFinished ? `Dernier cycle : ${this._ago(data.lastFinished.end)}` : "Aucun cycle enregistré");
+
+    const consumptionValue = running ? this._fmtKwh(data.currentEnergy) : this._fmtKwh(0);
+    const consumptionLabel = running ? "Cycle en cours" : "Aucune consommation en cours";
+
     this.shadowRoot.innerHTML = `
       <style>
-        :host{display:block}.card{background:var(--ha-card-background,var(--card-background-color,#fff));border-radius:16px;padding:16px}.machines{display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:14px}.machine{border:1px solid var(--divider-color);border-radius:14px;padding:15px}.title{font-size:19px;font-weight:650;display:flex;gap:9px;align-items:center}.icon{font-size:23px}header{display:flex;justify-content:space-between;align-items:center;margin-bottom:14px}.status{font-size:11px;font-weight:750}.on{color:var(--success-color,#43a047)}.off{color:var(--secondary-text-color)}.state{display:flex;align-items:center;gap:12px;padding:13px;border-radius:12px;background:var(--secondary-background-color);margin-bottom:10px}.state-icon{width:42px;height:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--card-background-color)}.state b,.state span{display:block}.state span{margin-top:4px;font-size:12px;color:var(--secondary-text-color)}.consumption{border:1px solid var(--divider-color);border-radius:12px;padding:13px;margin-bottom:10px}.label{font-size:10px;font-weight:750;letter-spacing:.08em}.energy{font-size:27px;margin-top:6px}.consumption small{color:var(--secondary-text-color)}.stats{display:grid;grid-template-columns:1fr auto 1fr;text-align:center;border:1px solid var(--divider-color);border-radius:12px;padding:12px}.stats span,.stats b,.stats small{display:block}.stats span{font-size:11px;color:var(--secondary-text-color)}.stats b{font-size:17px;margin-top:4px}.stats small{font-size:14px;margin-top:3px}.stats i{width:1px;height:48px;background:var(--divider-color);align-self:center}.loading{text-align:center;padding:25px;color:var(--secondary-text-color)}@media(max-width:600px){.machines{grid-template-columns:1fr}}
+        :host {
+          display: block;
+        }
+        
+        .card {
+          background: var(--ha-card-background, var(--card-background-color, #fff));
+          border-radius: 16px;
+          padding: 16px;
+          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        
+        .machine {
+          display: flex;
+          flex-direction: column;
+          gap: 16px;
+        }
+        
+        header {
+          display: flex;
+          justify-content: space-between;
+          align-items: center;
+          gap: 12px;
+        }
+        
+        .title {
+          display: flex;
+          align-items: center;
+          gap: 8px;
+          font-size: 18px;
+          font-weight: 600;
+          color: var(--primary-text-color);
+        }
+        
+        .icon {
+          font-size: 24px;
+        }
+        
+        .status {
+          display: flex;
+          align-items: center;
+          gap: 6px;
+          padding: 6px 12px;
+          border-radius: 12px;
+          font-size: 12px;
+          font-weight: 600;
+          text-transform: uppercase;
+        }
+        
+        .status.on {
+          background: rgba(76, 175, 80, 0.2);
+          color: var(--success-color, #4caf50);
+        }
+        
+        .status.off {
+          background: rgba(158, 158, 158, 0.2);
+          color: var(--secondary-text-color);
+        }
+        
+        .state {
+          display: flex;
+          gap: 12px;
+          padding: 12px;
+          background: var(--secondary-background-color, #f5f5f5);
+          border-radius: 12px;
+        }
+        
+        .state-icon {
+          font-size: 28px;
+          width: 32px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+        }
+        
+        .state > div:last-child {
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
+        
+        .state b {
+          color: var(--primary-text-color);
+          font-size: 16px;
+        }
+        
+        .state span {
+          color: var(--secondary-text-color);
+          font-size: 13px;
+          margin-top: 4px;
+        }
+        
+        .consumption {
+          padding: 12px;
+          background: var(--secondary-background-color, #f5f5f5);
+          border-radius: 12px;
+        }
+        
+        .label {
+          display: block;
+          color: var(--secondary-text-color);
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 8px;
+        }
+        
+        .energy {
+          font-size: 18px;
+          font-weight: 600;
+          color: var(--primary-text-color);
+          margin-bottom: 6px;
+        }
+        
+        .consumption small {
+          color: var(--secondary-text-color);
+          font-size: 12px;
+        }
+        
+        .stats {
+          display: grid;
+          grid-template-columns: 1fr auto 1fr;
+          gap: 12px;
+          padding: 12px;
+          background: var(--secondary-background-color, #f5f5f5);
+          border-radius: 12px;
+          text-align: center;
+        }
+        
+        .stats > div {
+          display: flex;
+          flex-direction: column;
+          justify-content: center;
+        }
+        
+        .stats span {
+          color: var(--secondary-text-color);
+          font-size: 12px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.5px;
+          margin-bottom: 6px;
+        }
+        
+        .stats b {
+          font-size: 16px;
+          color: var(--primary-text-color);
+        }
+        
+        .stats small {
+          color: var(--secondary-text-color);
+          font-size: 12px;
+          margin-top: 4px;
+        }
+        
+        .stats i {
+          width: 1px;
+          background: var(--divider-color, #ddd);
+        }
+        
+        .machine.running .state-icon {
+          animation: pulse 1s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.5; }
+        }
       </style>
       <ha-card class="card">
-        <div class="machines">
-          ${this._machine(c.laundry,this._data?.laundry,"🧺")}
-          ${this._machine(c.dryer,this._data?.dryer,"🔥")}
+        <div class="machine ${running ? "running" : ""}">
+          <header>
+            <div class="title">
+              <span class="icon">${this._icon}</span>
+              ${c.name}
+            </div>
+            <div class="status ${running ? "on" : "off"}">● ${status}</div>
+          </header>
+          <div class="state">
+            <div class="state-icon" data-running-duration>${running ? "▶" : "■"}</div>
+            <div>
+              <b>${running ? "Machine en cours" : "Machine à l'arrêt"}</b>
+              <span>${primary}</span>
+            </div>
+          </div>
+          <div class="consumption">
+            <span class="label">Consommation</span>
+            <div class="energy">⚡ <b>${consumptionValue}</b></div>
+            <small>${consumptionLabel}</small>
+          </div>
+          <div class="stats">
+            <div>
+              <span>Cette semaine</span>
+              <b>${data?.cyclesWeek || 0} cycle${(data?.cyclesWeek || 0) > 1 ? "s" : ""}</b>
+              <small>${this._fmtEuro(data?.costWeek || 0)}</small>
+            </div>
+            <i></i>
+            <div>
+              <span>Ce mois</span>
+              <b>${data?.cyclesMonth || 0} cycle${(data?.cyclesMonth || 0) > 1 ? "s" : ""}</b>
+              <small>${this._fmtEuro(data?.costMonth || 0)}</small>
+            </div>
+          </div>
         </div>
       </ha-card>`;
   }
 }
+
 customElements.define("laundry-card", LaundryCard);
 
+/* Configuration Editor */
 class LaundryCardEditor extends HTMLElement {
+  constructor() {
+    super();
+    this._config = {};
+    this._hass = null;
+  }
+
   setConfig(config) {
     this._config = JSON.parse(JSON.stringify(config || {}));
-    this._config.laundry ||= {};
-    this._config.dryer ||= {};
-    this._config.detection ||= {};
+    this._config.machine_type ??= "laundry";
+    this._config.name ??= this._config.machine_type === "dryer" ? "Sèche-linge" : "Lave-linge";
+    this._config.price_per_kwh ??= 0.25;
+    this._config.detection ??= {};
+    this._config.detection.start_power ??= 10;
+    this._config.detection.stop_power ??= 5;
+    this._config.detection.stop_delay ??= 180;
+    this._config.detection.min_cycle_duration ??= 60;
+    this._config.power ??= "";
+    this._config.energy ??= "";
+    this._config.current ??= "";
+    this._config.refresh_interval ??= 60000;
     this._render();
   }
 
@@ -295,20 +538,28 @@ class LaundryCardEditor extends HTMLElement {
 
   _fire(config) {
     this._config = config;
-    this.dispatchEvent(new CustomEvent("config-changed", {detail:{config}, bubbles:true, composed:true}));
+    this.dispatchEvent(
+      new CustomEvent("config-changed", {
+        detail: { config },
+        bubbles: true,
+        composed: true
+      })
+    );
   }
 
-  _input(label, value, path, type="text", step="") {
+  _createInput(label, value, path, type = "text", step = "") {
     const el = document.createElement("ha-textfield");
     el.label = label;
     el.value = value ?? "";
     el.type = type;
     if (step) el.step = step;
-    el.addEventListener("change", e => {
+    el.addEventListener("change", (e) => {
       const c = JSON.parse(JSON.stringify(this._config));
       const parts = path.split(".");
       let o = c;
-      for (let i=0;i<parts.length-1;i++) o = o[parts[i]] ||= {};
+      for (let i = 0; i < parts.length - 1; i++) {
+        o = o[parts[i]] ||= {};
+      }
       const raw = e.target.value;
       o[parts.at(-1)] = type === "number" ? Number(raw) : raw;
       this._fire(c);
@@ -316,89 +567,322 @@ class LaundryCardEditor extends HTMLElement {
     return el;
   }
 
-  _entityPicker(label, value, path, domainFilter) {
-    const row = document.createElement("div");
+  _createEntityPicker(label, value, path, domainFilter) {
     const sel = document.createElement("ha-entity-picker");
     sel.label = label;
     sel.hass = this._hass;
     sel.value = value || "";
     sel.includeDomains = domainFilter ? [domainFilter] : undefined;
     sel.allowCustomEntity = true;
-    sel.addEventListener("value-changed", e => {
+    sel.addEventListener("value-changed", (e) => {
       const c = JSON.parse(JSON.stringify(this._config));
       const parts = path.split(".");
       let o = c;
-      for (let i=0;i<parts.length-1;i++) o = o[parts[i]] ||= {};
+      for (let i = 0; i < parts.length - 1; i++) {
+        o = o[parts[i]] ||= {};
+      }
       o[parts.at(-1)] = e.detail.value;
       this._fire(c);
     });
-    row.appendChild(sel);
-    return row;
+    return sel;
   }
 
-  _machine(title, key) {
-    const box = document.createElement("div");
-    box.className = "section";
+  _createSection(title, content) {
+    const section = document.createElement("div");
+    section.className = "section";
     const h = document.createElement("h3");
     h.textContent = title;
-    box.appendChild(h);
-    const m = this._config[key] || {};
-    box.appendChild(this._input("Nom", m.name || (key==="laundry"?"Lave-linge":"Sèche-linge"), `${key}.name`));
-    box.appendChild(this._entityPicker("Puissance (W) — utilisée pour détecter les cycles", m.power, `${key}.power`, "sensor"));
-    box.appendChild(this._entityPicker("Énergie (kWh ou Wh) — consommation affichée", m.energy, `${key}.energy`, "sensor"));
-    box.appendChild(this._entityPicker("Courant (A) — non affiché", m.current, `${key}.current`, "sensor"));
-    return box;
+    section.appendChild(h);
+    if (Array.isArray(content)) {
+      content.forEach((el) => section.appendChild(el));
+    } else {
+      section.appendChild(content);
+    }
+    return section;
   }
 
   _render() {
     if (!this._hass) return;
+
     this.innerHTML = "";
+
     const style = document.createElement("style");
     style.textContent = `
-      :host{display:block;padding:12px}.section{padding:8px 0 18px;border-bottom:1px solid var(--divider-color);margin-bottom:15px}
-      h2{font-size:18px;margin:5px 0 16px}h3{font-size:15px;margin:0 0 12px}
-      ha-textfield,ha-entity-picker{display:block;margin:8px 0;width:100%}
-      .hint{color:var(--secondary-text-color);font-size:12px;line-height:1.45;margin:5px 0 12px}
-      .grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
-      @media(max-width:600px){.grid{grid-template-columns:1fr}}
+      :host {
+        display: block;
+        padding: 0;
+        background: var(--lovelace-background, var(--primary-background-color));
+      }
+
+      .editor-container {
+        max-width: 600px;
+        margin: 0;
+        background: var(--ha-card-background, var(--card-background-color, #fff));
+        border-radius: 8px;
+        overflow: hidden;
+      }
+
+      .editor-header {
+        padding: 16px;
+        border-bottom: 1px solid var(--divider-color);
+        background: var(--primary-color, #1976d2);
+        color: #fff;
+      }
+
+      .editor-header h2 {
+        margin: 0;
+        font-size: 18px;
+        font-weight: 600;
+      }
+
+      .editor-content {
+        padding: 16px;
+      }
+
+      .section {
+        margin-bottom: 24px;
+        padding-bottom: 16px;
+        border-bottom: 1px solid var(--divider-color);
+      }
+
+      .section:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+      }
+
+      h3 {
+        margin: 0 0 12px;
+        font-size: 14px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.5px;
+        color: var(--primary-text-color);
+      }
+
+      .hint {
+        color: var(--secondary-text-color);
+        font-size: 12px;
+        line-height: 1.5;
+        margin: 8px 0 0;
+      }
+
+      ha-textfield,
+      ha-entity-picker,
+      ha-select {
+        display: block;
+        margin: 12px 0 0;
+        width: 100%;
+      }
+
+      ha-textfield:first-child,
+      ha-entity-picker:first-child,
+      ha-select:first-child {
+        margin-top: 0;
+      }
+
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+
+      .grid > * {
+        margin: 0 !important;
+      }
+
+      .grid.full > * {
+        grid-column: 1 / -1;
+      }
+
+      @media (max-width: 600px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+
+      .info-box {
+        background: var(--secondary-background-color, #f5f5f5);
+        border-left: 4px solid var(--primary-color, #1976d2);
+        padding: 12px;
+        border-radius: 4px;
+        margin: 12px 0;
+      }
+
+      .info-box p {
+        margin: 0;
+        font-size: 12px;
+        line-height: 1.5;
+        color: var(--secondary-text-color);
+      }
     `;
     this.appendChild(style);
 
-    const title = document.createElement("h2");
-    title.textContent = "Laundry Card";
-    this.appendChild(title);
+    const container = document.createElement("div");
+    container.className = "editor-container";
 
-    const hint = document.createElement("div");
-    hint.className = "hint";
-    hint.textContent = "Aucune entité supplémentaire n'est créée. La carte utilise directement l'historique Home Assistant. Le courant et la puissance servent à la logique mais ne sont pas affichés.";
-    this.appendChild(hint);
+    const header = document.createElement("div");
+    header.className = "editor-header";
+    const headerTitle = document.createElement("h2");
+    headerTitle.textContent = "⚙️ Configuration Laundry Card";
+    header.appendChild(headerTitle);
+    container.appendChild(header);
 
-    this.appendChild(this._machine("🧺 Lave-linge","laundry"));
-    this.appendChild(this._machine("🔥 Sèche-linge","dryer"));
+    const content = document.createElement("div");
+    content.className = "editor-content";
 
-    const detection = document.createElement("div");
-    detection.className = "section";
-    const dh = document.createElement("h3"); dh.textContent = "Détection des cycles"; detection.appendChild(dh);
-    const grid = document.createElement("div"); grid.className = "grid";
-    grid.appendChild(this._input("Seuil de démarrage (W)", this._config.detection.start_power ?? 10, "detection.start_power","number","1"));
-    grid.appendChild(this._input("Seuil d'arrêt (W)", this._config.detection.stop_power ?? 5, "detection.stop_power","number","1"));
-    grid.appendChild(this._input("Délai avant arrêt confirmé (s)", this._config.detection.stop_delay ?? 180, "detection.stop_delay","number","1"));
-    grid.appendChild(this._input("Durée minimale d'un cycle (s)", this._config.detection.min_cycle_duration ?? 60, "detection.min_cycle_duration","number","1"));
-    detection.appendChild(grid); this.appendChild(detection);
+    // Machine Type Section
+    const machineSelect = document.createElement("ha-select");
+    machineSelect.label = "Type de machine";
+    machineSelect.value = this._config.machine_type || "laundry";
+    machineSelect.innerHTML = `
+      <mwc-list-item value="laundry">🧺 Lave-linge</mwc-list-item>
+      <mwc-list-item value="dryer">🔥 Sèche-linge</mwc-list-item>
+    `;
+    machineSelect.addEventListener("change", (e) => {
+      const c = JSON.parse(JSON.stringify(this._config));
+      c.machine_type = e.target.value;
+      c.name =
+        e.target.value === "dryer" ? "Sèche-linge" : "Lave-linge";
+      this._fire(c);
+    });
 
-    const pricing = document.createElement("div");
-    pricing.className = "section";
-    const ph = document.createElement("h3"); ph.textContent = "Tarification"; pricing.appendChild(ph);
-    pricing.appendChild(this._input("Prix du kWh (non affiché)", this._config.price_per_kwh ?? 0.25, "price_per_kwh","number","0.001"));
-    const pi = document.createElement("div"); pi.className="hint"; pi.textContent="Ce prix est uniquement utilisé pour calculer les coûts hebdomadaires et mensuels."; pricing.appendChild(pi);
-    this.appendChild(pricing);
+    const nameInput = this._createInput(
+      "Nom de la machine",
+      this._config.name,
+      "name"
+    );
+
+    content.appendChild(
+      this._createSection("Type de machine", [machineSelect, nameInput])
+    );
+
+    // Entity Selection Section
+    content.appendChild(
+      this._createSection("Capteurs (Entités)", [
+        this._createEntityPicker(
+          "⚡ Puissance (W) — détection des cycles",
+          this._config.power,
+          "power",
+          "sensor"
+        ),
+        this._createEntityPicker(
+          "📊 Énergie (kWh ou Wh) — consommation",
+          this._config.energy,
+          "energy",
+          "sensor"
+        ),
+        this._createEntityPicker(
+          "🔌 Courant (A) — optionnel",
+          this._config.current,
+          "current",
+          "sensor"
+        ),
+      ])
+    );
+
+    // Detection Parameters Section
+    const detectionGrid = document.createElement("div");
+    detectionGrid.className = "grid";
+    detectionGrid.appendChild(
+      this._createInput(
+        "Seuil de démarrage (W)",
+        this._config.detection.start_power,
+        "detection.start_power",
+        "number",
+        "1"
+      )
+    );
+    detectionGrid.appendChild(
+      this._createInput(
+        "Seuil d'arrêt (W)",
+        this._config.detection.stop_power,
+        "detection.stop_power",
+        "number",
+        "1"
+      )
+    );
+    detectionGrid.appendChild(
+      this._createInput(
+        "Délai avant arrêt (s)",
+        this._config.detection.stop_delay,
+        "detection.stop_delay",
+        "number",
+        "1"
+      )
+    );
+    detectionGrid.appendChild(
+      this._createInput(
+        "Durée min. cycle (s)",
+        this._config.detection.min_cycle_duration,
+        "detection.min_cycle_duration",
+        "number",
+        "1"
+      )
+    );
+
+    const detectionHint = document.createElement("div");
+    detectionHint.className = "hint";
+    detectionHint.innerHTML = `
+      <strong>Paramètres de détection :</strong><br>
+      • <strong>Seuil démarrage</strong> : puissance pour détecter le début (ex: 10 W)<br>
+      • <strong>Seuil arrêt</strong> : puissance pour confirmer la fin (ex: 5 W)<br>
+      • <strong>Délai arrêt</strong> : temps de confirmation avant arrêt (ex: 180 s)<br>
+      • <strong>Durée min</strong> : durée minimale d'un cycle valide (ex: 60 s)
+    `;
+
+    const detectionSection = document.createElement("div");
+    detectionSection.className = "section";
+    const detectionTitle = document.createElement("h3");
+    detectionTitle.textContent = "Détection des cycles";
+    detectionSection.appendChild(detectionTitle);
+    detectionSection.appendChild(detectionGrid);
+    detectionSection.appendChild(detectionHint);
+    content.appendChild(detectionSection);
+
+    // Pricing Section
+    const pricingInput = this._createInput(
+      "Prix du kWh (€)",
+      this._config.price_per_kwh,
+      "price_per_kwh",
+      "number",
+      "0.001"
+    );
+    const pricingHint = document.createElement("div");
+    pricingHint.className = "hint";
+    pricingHint.textContent =
+      "Utilisé pour calculer les coûts hebdomadaires et mensuels";
+    content.appendChild(
+      this._createSection("Tarification", [pricingInput, pricingHint])
+    );
+
+    // Refresh Interval Section
+    const refreshInput = this._createInput(
+      "Intervalle de rafraîchissement (ms)",
+      this._config.refresh_interval || 60000,
+      "refresh_interval",
+      "number",
+      "5000"
+    );
+    const refreshHint = document.createElement("div");
+    refreshHint.className = "hint";
+    refreshHint.textContent =
+      "Intervalle de mise à jour des données (minimum 15000 ms)";
+    content.appendChild(
+      this._createSection("Rafraîchissement", [refreshInput, refreshHint])
+    );
+
+    container.appendChild(content);
+    this.appendChild(container);
   }
 }
+
 customElements.define("laundry-card-editor", LaundryCardEditor);
 
+// Compatibility layer for existing configurations
 const old = customElements.get("laundry-card");
 if (old && !old.prototype.getConfigElement) {
-  old.prototype.getConfigElement = function() {
+  old.prototype.getConfigElement = function () {
     const editor = document.createElement("laundry-card-editor");
     editor.hass = this._hass;
     editor.setConfig(this._config);
