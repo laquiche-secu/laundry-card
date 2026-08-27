@@ -19,7 +19,7 @@ class LaundryCard extends HTMLElement {
       power: "",
       energy: "",
       current: "",
-      icon: "",
+      icon: "mdi:washing-machine",
       tap_action: { action: "more-info" }
     };
   }
@@ -33,7 +33,7 @@ class LaundryCard extends HTMLElement {
   setConfig(config) {
     const machineType = config.machine_type || "laundry";
     const defaultName = machineType === "dryer" ? "Sèche-linge" : "Lave-linge";
-    const defaultIcon = machineType === "dryer" ? "🔥" : "🧺";
+    const defaultIcon = machineType === "dryer" ? "mdi:tumble-dryer" : "mdi:washing-machine";
 
     this._config = {
       machine_type: machineType,
@@ -337,6 +337,12 @@ class LaundryCard extends HTMLElement {
       </div>
     ` : '';
 
+    // Icon handling: support mdi: icons using ha-icon
+    const iconValue = this._config.icon || this._icon || "";
+    const iconMarkup = String(iconValue).startsWith("mdi:")
+      ? `<ha-icon icon="${iconValue}"></ha-icon>`
+      : `${iconValue}`;
+
     // Cursor pointer if an action is configured
     const actionable = c.tap_action && c.tap_action.action && c.tap_action.action !== 'none';
 
@@ -390,6 +396,13 @@ class LaundryCard extends HTMLElement {
           justify-content: center;
           border-radius: 50%;
           background: rgba(var(--mush-rgb), 0.15);
+        }
+
+        .icon ha-icon {
+          --mdc-icon-size: 28px;
+          width: 28px;
+          height: 28px;
+          display: inline-block;
         }
         
         .title {
@@ -562,7 +575,7 @@ class LaundryCard extends HTMLElement {
         <div class="machine ${running ? "running" : ""}">
           <header>
             <div class="title-section">
-              <div class="icon">${this._icon}</div>
+              <div class="icon">${iconMarkup}</div>
               <div class="title">
                 <div class="title-text">${c.name}</div>
               </div>
@@ -630,7 +643,7 @@ class LaundryCardEditor extends HTMLElement {
     this._config.energy ??= "";
     this._config.current ??= "";
     this._config.refresh_interval ??= 60000;
-    this._config.icon ??= "";
+    this._config.icon ??= "mdi:washing-machine";
     this._config.tap_action ??= { action: 'more-info' };
     this._render();
   }
@@ -977,11 +990,24 @@ class LaundryCardEditor extends HTMLElement {
     );
 
     // Icon and Tap Action Section
-    const iconInput = this._createInput(
-      "Icône / logo (emoji ou texte)",
-      this._config.icon,
-      "icon"
-    );
+    // Use ha-icon-picker when available, fallback to text input
+    let iconInput;
+    if (customElements.get('ha-icon-picker')) {
+      iconInput = document.createElement('ha-icon-picker');
+      iconInput.hass = this._hass;
+      iconInput.value = this._config.icon || '';
+      iconInput.addEventListener('value-changed', (e) => {
+        const c = JSON.parse(JSON.stringify(this._config));
+        c.icon = e.detail.value;
+        this._fire(c);
+      });
+    } else {
+      iconInput = this._createInput(
+        "Icône / logo (mdi:nom_de_l_icone ou emoji)",
+        this._config.icon,
+        "icon"
+      );
+    }
 
     const actionSelect = document.createElement("ha-select");
     actionSelect.label = "Action au clic";
