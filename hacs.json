@@ -2,6 +2,5 @@
   "name": "Laundry Card",
   "content_in_root": true,
   "filename": "laundry-card.js",
-  "render_readme": true,
-  "homeassistant": ">=2024.1.0"
+  "render_readme": true
 }
