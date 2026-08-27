@@ -1,6 +1,7 @@
 /* Laundry Card
  * Displays power/energy history for a single laundry or dryer machine.
  * No helper entities required.
+ * Styled with Mushroom Card design
  */
 class LaundryCard extends HTMLElement {
   static getStubConfig() {
@@ -271,16 +272,15 @@ class LaundryCard extends HTMLElement {
         <style>
           :host { display: block; }
           .error { 
-            background: var(--ha-card-background, var(--card-background-color, #fff));
-            border-radius: 16px;
+            background: var(--card-background-color, #fff);
+            border-radius: 12px;
             padding: 16px;
             color: var(--error-color, #f44336);
             text-align: center;
+            font-weight: 500;
           }
         </style>
-        <ha-card class="card">
-          <div class="error">⚠️ Entité "power" non configurée</div>
-        </ha-card>`;
+        <div class="error">⚠️ Entité "power" non configurée</div>`;
       return;
     }
 
@@ -293,44 +293,77 @@ class LaundryCard extends HTMLElement {
 
     const consumptionValue = running ? this._fmtKwh(data.currentEnergy) : this._fmtKwh(0);
     const consumptionLabel = running ? "Cycle en cours" : "Aucune consommation en cours";
+    
+    // Affichage conditionnel de la consommation - s'affiche SEULEMENT si la machine est en fonctionnement
+    const consumptionDisplay = running ? `
+      <div class="consumption">
+        <span class="label">Consommation du cycle</span>
+        <div class="energy">⚡ <b>${consumptionValue}</b></div>
+        <small>${consumptionLabel}</small>
+      </div>
+    ` : '';
 
     this.shadowRoot.innerHTML = `
       <style>
         :host {
           display: block;
+          --mush-rgb: 76, 175, 80;
+          --mush-color: rgb(var(--mush-rgb));
+          --mush-rgb-off: 158, 158, 158;
+          --mush-color-off: rgb(var(--mush-rgb-off));
         }
         
         .card {
-          background: var(--ha-card-background, var(--card-background-color, #fff));
-          border-radius: 16px;
-          padding: 16px;
-          box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+          background: var(--card-background-color, #fff);
+          border-radius: 12px;
+          padding: 0;
+          box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
+          overflow: hidden;
+          border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.08));
         }
         
         .machine {
           display: flex;
           flex-direction: column;
-          gap: 16px;
+          padding: 16px;
         }
         
         header {
           display: flex;
           justify-content: space-between;
           align-items: center;
+          margin-bottom: 16px;
           gap: 12px;
+        }
+        
+        .title-section {
+          display: flex;
+          align-items: center;
+          gap: 12px;
+          flex: 1;
+        }
+        
+        .icon {
+          font-size: 32px;
+          width: 48px;
+          height: 48px;
+          display: flex;
+          align-items: center;
+          justify-content: center;
+          border-radius: 50%;
+          background: rgba(var(--mush-rgb), 0.15);
         }
         
         .title {
           display: flex;
-          align-items: center;
-          gap: 8px;
-          font-size: 18px;
-          font-weight: 600;
-          color: var(--primary-text-color);
+          flex-direction: column;
+          gap: 2px;
         }
         
-        .icon {
-          font-size: 24px;
+        .title-text {
+          font-size: 16px;
+          font-weight: 600;
+          color: var(--primary-text-color);
         }
         
         .status {
@@ -338,59 +371,91 @@ class LaundryCard extends HTMLElement {
           align-items: center;
           gap: 6px;
           padding: 6px 12px;
-          border-radius: 12px;
-          font-size: 12px;
+          border-radius: 8px;
+          font-size: 11px;
           font-weight: 600;
           text-transform: uppercase;
+          letter-spacing: 0.5px;
+          white-space: nowrap;
         }
         
         .status.on {
-          background: rgba(76, 175, 80, 0.2);
+          background: rgba(76, 175, 80, 0.15);
           color: var(--success-color, #4caf50);
         }
         
         .status.off {
-          background: rgba(158, 158, 158, 0.2);
+          background: rgba(158, 158, 158, 0.15);
           color: var(--secondary-text-color);
+        }
+        
+        .status-dot {
+          width: 8px;
+          height: 8px;
+          border-radius: 50%;
+          display: inline-block;
+          background: currentColor;
+        }
+        
+        .status.on .status-dot {
+          animation: pulse 2s ease-in-out infinite;
+        }
+        
+        @keyframes pulse {
+          0%, 100% { opacity: 1; }
+          50% { opacity: 0.6; }
         }
         
         .state {
           display: flex;
           gap: 12px;
           padding: 12px;
-          background: var(--secondary-background-color, #f5f5f5);
-          border-radius: 12px;
+          background: var(--secondary-background-color, rgba(0, 0, 0, 0.02));
+          border-radius: 8px;
+          margin-bottom: 12px;
         }
         
         .state-icon {
-          font-size: 28px;
+          font-size: 24px;
           width: 32px;
           display: flex;
           align-items: center;
           justify-content: center;
+          flex-shrink: 0;
         }
         
-        .state > div:last-child {
+        .machine.running .state-icon {
+          animation: bounce 1s ease-in-out infinite;
+        }
+        
+        @keyframes bounce {
+          0%, 100% { transform: scale(1); }
+          50% { transform: scale(1.1); }
+        }
+        
+        .state-text {
           display: flex;
           flex-direction: column;
           justify-content: center;
+          gap: 4px;
         }
         
-        .state b {
+        .state-text b {
           color: var(--primary-text-color);
-          font-size: 16px;
+          font-size: 15px;
+          font-weight: 600;
         }
         
-        .state span {
+        .state-text span {
           color: var(--secondary-text-color);
           font-size: 13px;
-          margin-top: 4px;
         }
         
         .consumption {
           padding: 12px;
-          background: var(--secondary-background-color, #f5f5f5);
-          border-radius: 12px;
+          background: var(--secondary-background-color, rgba(0, 0, 0, 0.02));
+          border-radius: 8px;
+          margin-bottom: 12px;
         }
         
         .label {
@@ -400,14 +465,18 @@ class LaundryCard extends HTMLElement {
           font-weight: 600;
           text-transform: uppercase;
           letter-spacing: 0.5px;
-          margin-bottom: 8px;
+          margin-bottom: 6px;
         }
         
         .energy {
-          font-size: 18px;
+          font-size: 20px;
           font-weight: 600;
           color: var(--primary-text-color);
-          margin-bottom: 6px;
+          margin-bottom: 4px;
+        }
+        
+        .energy b {
+          color: var(--success-color, #4caf50);
         }
         
         .consumption small {
@@ -417,90 +486,79 @@ class LaundryCard extends HTMLElement {
         
         .stats {
           display: grid;
-          grid-template-columns: 1fr auto 1fr;
+          grid-template-columns: 1fr 1fr;
           gap: 12px;
+        }
+        
+        .stat-item {
           padding: 12px;
-          background: var(--secondary-background-color, #f5f5f5);
-          border-radius: 12px;
+          background: var(--secondary-background-color, rgba(0, 0, 0, 0.02));
+          border-radius: 8px;
           text-align: center;
         }
         
-        .stats > div {
-          display: flex;
-          flex-direction: column;
-          justify-content: center;
-        }
-        
-        .stats span {
+        .stat-item span {
+          display: block;
           color: var(--secondary-text-color);
-          font-size: 12px;
+          font-size: 11px;
           font-weight: 600;
           text-transform: uppercase;
           letter-spacing: 0.5px;
           margin-bottom: 6px;
         }
         
-        .stats b {
+        .stat-item b {
+          display: block;
           font-size: 16px;
           color: var(--primary-text-color);
+          margin-bottom: 4px;
         }
         
-        .stats small {
+        .stat-item small {
+          display: block;
           color: var(--secondary-text-color);
           font-size: 12px;
-          margin-top: 4px;
-        }
-        
-        .stats i {
-          width: 1px;
-          background: var(--divider-color, #ddd);
-        }
-        
-        .machine.running .state-icon {
-          animation: pulse 1s ease-in-out infinite;
-        }
-        
-        @keyframes pulse {
-          0%, 100% { opacity: 1; }
-          50% { opacity: 0.5; }
         }
       </style>
-      <ha-card class="card">
+      <div class="card">
         <div class="machine ${running ? "running" : ""}">
           <header>
-            <div class="title">
-              <span class="icon">${this._icon}</span>
-              ${c.name}
+            <div class="title-section">
+              <div class="icon">${this._icon}</div>
+              <div class="title">
+                <div class="title-text">${c.name}</div>
+              </div>
             </div>
-            <div class="status ${running ? "on" : "off"}">● ${status}</div>
+            <div class="status ${running ? "on" : "off"}">
+              <span class="status-dot"></span>
+              ${status}
+            </div>
           </header>
+          
           <div class="state">
-            <div class="state-icon" data-running-duration>${running ? "▶" : "■"}</div>
-            <div>
+            <div class="state-icon">${running ? "▶" : "■"}</div>
+            <div class="state-text">
               <b>${running ? "Machine en cours" : "Machine à l'arrêt"}</b>
-              <span>${primary}</span>
+              <span data-running-duration>${primary}</span>
             </div>
           </div>
-          <div class="consumption">
-            <span class="label">Consommation</span>
-            <div class="energy">⚡ <b>${consumptionValue}</b></div>
-            <small>${consumptionLabel}</small>
-          </div>
+          
+          ${consumptionDisplay}
+          
           <div class="stats">
-            <div>
+            <div class="stat-item">
               <span>Cette semaine</span>
               <b>${data?.cyclesWeek || 0} cycle${(data?.cyclesWeek || 0) > 1 ? "s" : ""}</b>
               <small>${this._fmtEuro(data?.costWeek || 0)}</small>
             </div>
-            <i></i>
-            <div>
+            <div class="stat-item">
               <span>Ce mois</span>
               <b>${data?.cyclesMonth || 0} cycle${(data?.cyclesMonth || 0) > 1 ? "s" : ""}</b>
               <small>${this._fmtEuro(data?.costMonth || 0)}</small>
             </div>
           </div>
         </div>
-      </ha-card>`;
+      </div>`;
   }
 }
 
@@ -617,7 +675,7 @@ class LaundryCardEditor extends HTMLElement {
       .editor-container {
         max-width: 600px;
         margin: 0;
-        background: var(--ha-card-background, var(--card-background-color, #fff));
+        background: var(--card-background-color, #fff);
         border-radius: 8px;
         overflow: hidden;
       }
@@ -625,7 +683,7 @@ class LaundryCardEditor extends HTMLElement {
       .editor-header {
         padding: 16px;
         border-bottom: 1px solid var(--divider-color);
-        background: var(--primary-color, #1976d2);
+        background: linear-gradient(135deg, var(--primary-color, #1976d2) 0%, var(--accent-color, #00bcd4) 100%);
         color: #fff;
       }
 
