@@ -18,7 +18,9 @@ class LaundryCard extends HTMLElement {
       },
       power: "",
       energy: "",
-      current: ""
+      current: "",
+      icon: "",
+      tap_action: { action: "more-info" }
     };
   }
 
@@ -47,6 +49,8 @@ class LaundryCard extends HTMLElement {
       energy: "",
       current: "",
       refresh_interval: 60000,
+      icon: defaultIcon,
+      tap_action: { action: "more-info" },
       ...config,
     };
 
@@ -58,7 +62,7 @@ class LaundryCard extends HTMLElement {
       ...(config.detection || {})
     };
 
-    this._icon = defaultIcon;
+    this._icon = this._config.icon || defaultIcon;
     this._render();
   }
 
@@ -263,6 +267,36 @@ class LaundryCard extends HTMLElement {
     }
   }
 
+  _handleAction(action) {
+    if (!action || action.action === 'none') return;
+    const act = action.action;
+    try {
+      if (act === 'more-info') {
+        const entity = action.entity || this._config.power || this._config.energy || null;
+        if (entity) this.dispatchEvent(new CustomEvent('hass-more-info', { detail: { entityId: entity }, bubbles: true, composed: true }));
+      } else if (act === 'navigate') {
+        const nav = action.navigation_path || action.navigation || action.path || null;
+        if (nav) window.history.pushState({}, '', nav);
+      } else if (act === 'url') {
+        const url = action.url;
+        if (url) window.open(url, '_blank');
+      } else if (act === 'toggle') {
+        const entity = action.entity || this._config.power || null;
+        if (entity) this._hass.callService('homeassistant', 'toggle', { entity_id: entity });
+      } else if (act === 'call-service') {
+        const domain = action.service?.split('.')?.[0] || action.service_domain || null;
+        const service = action.service?.split('.')?.[1] || action.service || null;
+        let serviceData = action.service_data || action.data || {};
+        if (typeof serviceData === 'string') {
+          try { serviceData = JSON.parse(serviceData); } catch (e) { serviceData = {}; }
+        }
+        if (domain && service) this._hass.callService(domain, service, serviceData);
+      }
+    } catch (e) {
+      console.error('Laundry Card action error', e);
+    }
+  }
+
   _render() {
     if (!this.shadowRoot) this.attachShadow({ mode: "open" });
 
@@ -293,7 +327,7 @@ class LaundryCard extends HTMLElement {
 
     const consumptionValue = running ? this._fmtKwh(data.currentEnergy) : this._fmtKwh(0);
     const consumptionLabel = running ? "Cycle en cours" : "Aucune consommation en cours";
-    
+
     // Affichage conditionnel de la consommation - s'affiche SEULEMENT si la machine est en fonctionnement
     const consumptionDisplay = running ? `
       <div class="consumption">
@@ -302,6 +336,9 @@ class LaundryCard extends HTMLElement {
         <small>${consumptionLabel}</small>
       </div>
     ` : '';
+
+    // Cursor pointer if an action is configured
+    const actionable = c.tap_action && c.tap_action.action && c.tap_action.action !== 'none';
 
     this.shadowRoot.innerHTML = `
       <style>
@@ -320,6 +357,7 @@ class LaundryCard extends HTMLElement {
           box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
           overflow: hidden;
           border: 1px solid var(--divider-color, rgba(0, 0, 0, 0.08));
+          ${actionable ? 'cursor: pointer;' : ''}
         }
         
         .machine {
@@ -559,6 +597,12 @@ class LaundryCard extends HTMLElement {
           </div>
         </div>
       </div>`;
+
+    const cardEl = this.shadowRoot.querySelector('.card');
+    if (cardEl) {
+      // attach click handler for tap_action
+      cardEl.onclick = () => this._handleAction(this._config.tap_action || {});
+    }
   }
 }
 
@@ -586,6 +630,8 @@ class LaundryCardEditor extends HTMLElement {
     this._config.energy ??= "";
     this._config.current ??= "";
     this._config.refresh_interval ??= 60000;
+    this._config.icon ??= "";
+    this._config.tap_action ??= { action: 'more-info' };
     this._render();
   }
 
@@ -929,6 +975,84 @@ class LaundryCardEditor extends HTMLElement {
     content.appendChild(
       this._createSection("Rafraîchissement", [refreshInput, refreshHint])
     );
+
+    // Icon and Tap Action Section
+    const iconInput = this._createInput(
+      "Icône / logo (emoji ou texte)",
+      this._config.icon,
+      "icon"
+    );
+
+    const actionSelect = document.createElement("ha-select");
+    actionSelect.label = "Action au clic";
+    actionSelect.value = (this._config.tap_action && this._config.tap_action.action) || 'none';
+    actionSelect.innerHTML = `
+      <mwc-list-item value="none">Aucune</mwc-list-item>
+      <mwc-list-item value="more-info">Plus d'info (more-info)</mwc-list-item>
+      <mwc-list-item value="navigate">Navigation (navigate)</mwc-list-item>
+      <mwc-list-item value="url">Ouvrir URL (url)</mwc-list-item>
+      <mwc-list-item value="toggle">Basculer entité (toggle)</mwc-list-item>
+      <mwc-list-item value="call-service">Appeler service (call-service)</mwc-list-item>
+    `;
+    actionSelect.addEventListener('change', (e) => {
+      const c = JSON.parse(JSON.stringify(this._config));
+      c.tap_action = c.tap_action || {};
+      c.tap_action.action = e.target.value;
+      this._fire(c);
+    });
+
+    const actionEntityPicker = this._createEntityPicker(
+      "Entité cible (pour more-info / toggle)",
+      this._config.tap_action?.entity || '',
+      'tap_action.entity',
+      ''
+    );
+
+    const actionUrl = this._createInput(
+      "URL (pour action url)",
+      this._config.tap_action?.url || '',
+      'tap_action.url'
+    );
+
+    const actionNav = this._createInput(
+      "Chemin de navigation (pour navigate)",
+      this._config.tap_action?.navigation_path || this._config.tap_action?.navigation || '',
+      'tap_action.navigation_path'
+    );
+
+    const actionServiceDomain = this._createInput(
+      "Service (format domain.service, ex: light.turn_on)",
+      this._config.tap_action?.service || '',
+      'tap_action.service'
+    );
+
+    const actionServiceData = this._createInput(
+      "Données du service (JSON)",
+      typeof this._config.tap_action?.service_data === 'string' ? this._config.tap_action.service_data : JSON.stringify(this._config.tap_action?.service_data || {}),
+      'tap_action.service_data'
+    );
+
+    const actionSection = document.createElement('div');
+    actionSection.className = 'section';
+    const actionTitle = document.createElement('h3');
+    actionTitle.textContent = 'Action au clic';
+    actionSection.appendChild(actionTitle);
+    actionSection.appendChild(iconInput);
+    actionSection.appendChild(actionSelect);
+    actionSection.appendChild(actionEntityPicker);
+    actionSection.appendChild(actionUrl);
+    actionSection.appendChild(actionNav);
+    actionSection.appendChild(actionServiceDomain);
+    actionSection.appendChild(actionServiceData);
+
+    const actionHint = document.createElement('div');
+    actionHint.className = 'hint';
+    actionHint.innerHTML = `
+      Choisissez l'action exécutée lors du clic sur la carte. Pour appeler un service, entrez le service sous la forme <code>domain.service</code> et les données en JSON.
+    `;
+    actionSection.appendChild(actionHint);
+
+    content.appendChild(actionSection);
 
     container.appendChild(content);
     this.appendChild(container);
